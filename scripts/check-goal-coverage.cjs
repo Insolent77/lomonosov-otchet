@@ -125,12 +125,43 @@ async function main() {
       ORDER BY uses DESC, k.key
     `);
 
+
+    const textColumns = await client.query(`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema='public'
+        AND data_type IN ('character varying','text')
+      ORDER BY table_name,column_name
+    `);
+
+    const needles = [
+      'Каждый урок делает тебя сильнее',
+      'Работай сейчас',
+      'top_school',
+      'math_school_program_catch_up'
+    ];
+
+    const hits = [];
+    for (const col of textColumns.rows) {
+      const table = '"' + col.table_name.replaceAll('"','""') + '"';
+      const column = '"' + col.column_name.replaceAll('"','""') + '"';
+      for (const needle of needles) {
+        const q = 'SELECT COUNT(*)::int AS n FROM public.' + table +
+          ' WHERE ' + column + ' ILIKE $1';
+        const found = await client.query(q, ['%' + needle + '%']);
+        if (found.rows[0].n > 0) {
+          hits.push({table: col.table_name, column: col.column_name, needle, count: found.rows[0].n});
+        }
+      }
+    }
+
     await client.query('ROLLBACK');
 
     console.log('GOAL_COVERAGE=' + JSON.stringify(coverage.rows[0]));
     console.log('LESSON_GOAL_VALUES=' + JSON.stringify(goalValues.rows));
     console.log('DREAM_ELEM_TYPES=' + JSON.stringify(dreamShape.rows));
     console.log('DREAM_OBJECT_KEYS=' + JSON.stringify(dreamKeys.rows));
+    console.log('TEXT_SEARCH_HITS=' + JSON.stringify(hits));
   } finally {
     await client.end().catch(()=>{});
   }
