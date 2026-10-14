@@ -49,10 +49,26 @@ async function main() {
          OR text ILIKE '%math_school_program_catch_up%'
       ORDER BY id
     `);
+
+    const cols=await c.query(`
+      SELECT table_name,column_name,data_type
+      FROM information_schema.columns
+      WHERE table_schema='public'
+        AND (
+          column_name ILIKE '%goal%'
+          OR column_name ILIKE '%dream%'
+          OR column_name ILIKE '%target%'
+          OR column_name ILIKE '%objective%'
+          OR column_name ILIKE '%school%'
+        )
+      ORDER BY table_name,column_name
+    `);
+
     await c.query('ROLLBACK');
     console.log('TEMPLATE_HITS='+JSON.stringify(a.rows));
     console.log('VARIABLE_HITS='+JSON.stringify(b.rows));
     console.log('INFO_HITS='+JSON.stringify(d.rows));
+    console.log('GOAL_COLUMNS='+JSON.stringify(cols.rows));
   } finally { await c.end().catch(()=>{}); }
 }
 main().catch(e=>{console.error('LOOKUP_FAILED:'+(e.code||e.message||'ERROR'));process.exitCode=1;});
