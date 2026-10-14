@@ -53,7 +53,7 @@ async function main() {
     const out = pairs.map((p,i)=>({row:i+2,goal:p.goal || null}));
     fs.mkdirSync('goal-row-result',{recursive:true});
     fs.writeFileSync('goal-row-result/goals.json',JSON.stringify(out,null,2),'utf8');
-    console.log('Goal row export completed. rows=' + out.length + ', filled=' + out.filter(x=>x.goal).length);
+    for (const x of out) { if (x.goal) console.log('GOAL|' + x.row + '|' + Buffer.from(x.goal,'utf8').toString('base64')); }\n    console.log('Goal row export completed. rows=' + out.length + ', filled=' + out.filter(x=>x.goal).length);
   } finally {
     await c.end().catch(()=>{});
   }
