@@ -1,0 +1,29 @@
+name: Test authenticated PostgreSQL connection
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/test-db-login.cjs'
+      - '.github/workflows/test-db-login.yml'
+permissions:
+  contents: read
+jobs:
+  connection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Execute read-only SELECT 1
+        run: node scripts/test-db-login.cjs
+        env:
+          DB_HOST: 37.140.199.107
+          DB_PORT: '16623'
+          DB_NAME: mylomonosov
+          DB_USER: readonly_user
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: ${{ vars.DB_SSL || 'false' }}
