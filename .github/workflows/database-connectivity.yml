@@ -1,0 +1,27 @@
+name: Check database connectivity
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/check-db-connectivity.cjs'
+      - '.github/workflows/database-connectivity.yml'
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check PostgreSQL protocol without exposing credentials
+        run: node scripts/check-db-connectivity.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: database-connectivity
+          path: connectivity-result/result.json
+          retention-days: 7
