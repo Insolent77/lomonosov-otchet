@@ -12,4 +12,7 @@ app=app.replace('Эти строки иллюстрируют присланну
 fs.writeFileSync(path.join(target,'app.js'),app);
 fs.writeFileSync(path.join(target,'reference.json'),read('reference.json'));
 fs.writeFileSync(path.join(target,'.nojekyll'),'');
-console.log('Static preview built in docs/');
+fs.writeFileSync(path.join(source,'index.html'),fs.readFileSync(path.join(target,'index.html'),'utf8').replace('href="./style.css"','href="../docs/style.css"').replace('src="./app.js"','src="../docs/app.js"'));
+fs.mkdirSync(path.join(target,'student-register'),{recursive:true});
+fs.writeFileSync(path.join(target,'student-register','index.html'),'<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=../index.html"><title>Мой Ломоносов — отчёты</title></head><body><a href="../index.html">Открыть таблицу учеников</a></body></html>\n');
+console.log('Static preview built for root and docs Pages sources.');
