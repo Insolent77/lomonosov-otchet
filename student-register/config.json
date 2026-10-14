@@ -1,0 +1,14 @@
+{
+  "djangoBaseUrl": "https://mylomonosov.37.140.199.107.sslip.io",
+  "groupFormats": {
+    "1": "инд"
+  },
+  "studentStatuses": {
+    "0": "Архивный",
+    "1": "Активный"
+  },
+  "courseLevelsByTag": {},
+  "courseEditors": {},
+  "assessmentTopicIdsByCourse": {},
+  "reviewed": false
+}

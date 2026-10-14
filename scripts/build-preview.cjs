@@ -1,0 +1,15 @@
+const fs=require('node:fs'),path=require('node:path');
+const root=path.resolve(__dirname,'..'),source=path.join(root,'student-register'),target=path.join(root,'docs');
+fs.mkdirSync(target,{recursive:true});
+const read=f=>fs.readFileSync(path.join(source,f),'utf8');
+fs.writeFileSync(path.join(target,'index.html'),read('public/index.html').replaceAll('href="/style.css"','href="./style.css"').replaceAll('src="/app.js"','src="./app.js"').replaceAll('href="/"','href="./'));
+fs.writeFileSync(path.join(target,'style.css'),read('public/style.css'));
+let app=read('public/app.js');
+app=app.replace("reference?'/api/reference':'/api/students?'+qs","'./reference.json'");
+app=app.replace("$('refresh').addEventListener('click',()=>load(false));","$('refresh').addEventListener('click',()=>load(true));");
+app=app.replace('load();','load(true);');
+app=app.replace('Эти строки иллюстрируют присланную таблицу и не являются актуальными данными PostgreSQL.','Все записи условные. Актуальные данные доступны только через сервер отчётов.');
+fs.writeFileSync(path.join(target,'app.js'),app);
+fs.writeFileSync(path.join(target,'reference.json'),read('reference.json'));
+fs.writeFileSync(path.join(target,'.nojekyll'),'');
+console.log('Static preview built in docs/');
