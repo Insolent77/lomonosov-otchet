@@ -12,7 +12,7 @@ async function main() {
     ssl: false,
     connectionTimeoutMillis: 15000,
     query_timeout: 60000,
-    application_name: 'lomonosov_goal_coverage_check'
+    application_name: 'lomonosov_goal_shape_check'
   });
 
   await client.connect();
@@ -20,14 +20,12 @@ async function main() {
     await client.query('BEGIN READ ONLY');
     await client.query("SET LOCAL statement_timeout='60000ms'");
 
-    const r = await client.query(`
+    const coverage = await client.query(`
       WITH pairs AS (
-        SELECT DISTINCT
-          gls.student_id,
-          l.group_id
+        SELECT DISTINCT gls.student_id, l.group_id
         FROM public.group_lesson_students gls
-        JOIN public.group_lesson l ON l.id = gls.lesson_id
-        JOIN public.student_student s ON s.id = gls.student_id
+        JOIN public.group_lesson l ON l.id=gls.lesson_id
+        JOIN public.student_student s ON s.id=gls.student_id
         WHERE l.start_dt >= TIMESTAMPTZ '2026-09-01 00:00:00+03'
           AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
           AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
@@ -35,9 +33,7 @@ async function main() {
       )
       SELECT
         COUNT(*)::int AS pair_count,
-        COUNT(*) FILTER (
-          WHERE NULLIF(BTRIM(COALESCE(gl.learning_goal,'')), '') IS NOT NULL
-        )::int AS group_learning_goal_filled,
+        COUNT(*) FILTER (WHERE NULLIF(BTRIM(COALESCE(gl.learning_goal,'')), '') IS NOT NULL)::int AS group_learning_goal_filled,
         COUNT(*) FILTER (
           WHERE s.lesson_goals IS NOT NULL
             AND s.lesson_goals <> 'null'::jsonb
@@ -49,21 +45,14 @@ async function main() {
             AND s.dream_schools <> 'null'::jsonb
             AND s.dream_schools <> '{}'::jsonb
             AND s.dream_schools <> '[]'::jsonb
-        )::int AS dream_schools_filled,
-        COUNT(*) FILTER (
-          WHERE s.lesson_goals IS NOT NULL
-        )::int AS lesson_goals_nonnull,
-        COUNT(*) FILTER (
-          WHERE s.dream_schools IS NOT NULL
-        )::int AS dream_schools_nonnull
+        )::int AS dream_schools_filled
       FROM pairs p
       JOIN public.student_student s ON s.id=p.student_id
       LEFT JOIN public.student_studentgrouplearninggoal gl
-        ON gl.student_id=p.student_id
-       AND gl.group_id=p.group_id
+        ON gl.student_id=p.student_id AND gl.group_id=p.group_id
     `);
 
-    const types = await client.query(`
+    const goalValues = await client.query(`
       WITH students AS (
         SELECT DISTINCT gls.student_id
         FROM public.group_lesson_students gls
@@ -73,21 +62,75 @@ async function main() {
           AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
           AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
           AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'тест%'
+      ),
+      elems AS (
+        SELECT jsonb_array_elements(s.lesson_goals) elem
+        FROM students x
+        JOIN public.student_student s ON s.id=x.student_id
+        WHERE jsonb_typeof(s.lesson_goals)='array'
       )
       SELECT
-        COALESCE(jsonb_typeof(s.lesson_goals),'null') AS lesson_goals_type,
-        COALESCE(jsonb_typeof(s.dream_schools),'null') AS dream_schools_type,
-        COUNT(*)::int AS students
-      FROM students x
-      JOIN public.student_student s ON s.id=x.student_id
+        jsonb_typeof(elem) AS elem_type,
+        CASE WHEN jsonb_typeof(elem)='string' THEN elem #>> '{}' ELSE NULL END AS string_value,
+        COUNT(*)::int AS uses
+      FROM elems
       GROUP BY 1,2
-      ORDER BY 1,2
+      ORDER BY uses DESC, string_value
+    `);
+
+    const dreamShape = await client.query(`
+      WITH students AS (
+        SELECT DISTINCT gls.student_id
+        FROM public.group_lesson_students gls
+        JOIN public.group_lesson l ON l.id=gls.lesson_id
+        JOIN public.student_student s ON s.id=gls.student_id
+        WHERE l.start_dt >= TIMESTAMPTZ '2026-09-01 00:00:00+03'
+          AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
+          AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
+          AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'тест%'
+      ),
+      elems AS (
+        SELECT jsonb_array_elements(s.dream_schools) elem
+        FROM students x
+        JOIN public.student_student s ON s.id=x.student_id
+        WHERE jsonb_typeof(s.dream_schools)='array'
+      )
+      SELECT jsonb_typeof(elem) AS elem_type, COUNT(*)::int AS uses
+      FROM elems
+      GROUP BY 1
+      ORDER BY uses DESC
+    `);
+
+    const dreamKeys = await client.query(`
+      WITH students AS (
+        SELECT DISTINCT gls.student_id
+        FROM public.group_lesson_students gls
+        JOIN public.group_lesson l ON l.id=gls.lesson_id
+        JOIN public.student_student s ON s.id=gls.student_id
+        WHERE l.start_dt >= TIMESTAMPTZ '2026-09-01 00:00:00+03'
+          AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
+          AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
+          AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'тест%'
+      ),
+      elems AS (
+        SELECT jsonb_array_elements(s.dream_schools) elem
+        FROM students x
+        JOIN public.student_student s ON s.id=x.student_id
+        WHERE jsonb_typeof(s.dream_schools)='array'
+      )
+      SELECT k.key, COUNT(*)::int AS uses
+      FROM elems
+      CROSS JOIN LATERAL jsonb_object_keys(CASE WHEN jsonb_typeof(elem)='object' THEN elem ELSE '{}'::jsonb END) k(key)
+      GROUP BY k.key
+      ORDER BY uses DESC, k.key
     `);
 
     await client.query('ROLLBACK');
 
-    console.log('GOAL_COVERAGE=' + JSON.stringify(r.rows[0]));
-    console.log('GOAL_JSON_TYPES=' + JSON.stringify(types.rows));
+    console.log('GOAL_COVERAGE=' + JSON.stringify(coverage.rows[0]));
+    console.log('LESSON_GOAL_VALUES=' + JSON.stringify(goalValues.rows));
+    console.log('DREAM_ELEM_TYPES=' + JSON.stringify(dreamShape.rows));
+    console.log('DREAM_OBJECT_KEYS=' + JSON.stringify(dreamKeys.rows));
   } finally {
     await client.end().catch(()=>{});
   }
