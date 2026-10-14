@@ -1,0 +1,56 @@
+name: Refresh student report from PostgreSQL
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'student-register/report.cjs'
+      - 'student-register/config.json'
+      - 'student-register/pages/**'
+      - 'student-register/public/style.css'
+      - 'scripts/build-live-pages.cjs'
+      - '.github/workflows/refresh-student-report.yml'
+permissions:
+  contents: read
+concurrency:
+  group: student-report-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Query current database and build report page
+        run: node scripts/build-live-pages.cjs
+        env:
+          DB_HOST: 37.140.199.107
+          DB_PORT: '16623'
+          DB_NAME: mylomonosov
+          DB_USER: readonly_user
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: ${{ vars.DB_SSL || 'false' }}
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish database report
+        id: deployment
+        uses: actions/deploy-pages@v4
