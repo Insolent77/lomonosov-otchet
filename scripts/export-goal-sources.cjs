@@ -33,6 +33,7 @@ async function main() {
       SELECT DISTINCT
         gls.student_id,
         l.group_id,
+        s.student_goal,
         s.lesson_goals,
         s.dream_schools
       FROM public.group_lesson_students gls
@@ -49,6 +50,7 @@ async function main() {
     for (const row of r.rows) {
       const key = fnv1a(String(row.student_id) + '|' + String(row.group_id));
       const payload = Buffer.from(JSON.stringify({
+        student_goal: row.student_goal,
         lesson_goals: row.lesson_goals,
         dream_schools: row.dream_schools
       }), 'utf8').toString('base64');
