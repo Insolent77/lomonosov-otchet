@@ -59,13 +59,14 @@ async function main() {
       SELECT
         ah.course_id,
         t.id topic_id,
+        t.name topic_name,
         COUNT(task.id)::int task_count
       FROM public.course_assignedhomework ah
       JOIN public.course_topicinhomework tih ON tih.homework_id=ah.homework_id
       JOIN public.course_topic t ON t.id=tih.topic_id
       LEFT JOIN public.course_task task ON task.topic_id=t.id
       WHERE LOWER(t.name) LIKE '%срез знаний сентябрь%'
-      GROUP BY ah.course_id,t.id
+      GROUP BY ah.course_id,t.id,t.name
       ORDER BY ah.course_id,t.id
     `);
 
@@ -99,7 +100,7 @@ async function main() {
     for (const d of diagnosticsQ.rows) {
       const key=String(d.course_id);
       if (!byCourse.has(key)) byCourse.set(key,[]);
-      byCourse.get(key).push({topic_id:String(d.topic_id),task_count:Number(d.task_count||0)});
+      byCourse.get(key).push({topic_id:String(d.topic_id),topic_name:clean(d.topic_name),task_count:Number(d.task_count||0)});
     }
     const ans = new Map();
     for (const a of answersQ.rows) {
@@ -146,6 +147,11 @@ async function main() {
 
       // Sanitized output only: target row + diagnostic metrics + status.
       console.log(['ROW',row,has,answered,correct,total,pct,status].join('|'));
+      if (chosen && chosen.topic_id && chosen.topic_name) {
+        console.log('TOPICROW|' + row + '|' + chosen.topic_id + '|' + Buffer.from(chosen.topic_name,'utf8').toString('base64'));
+      } else {
+        console.log('TOPICROW|' + row + '||');
+      }
     });
     console.log('STATS|'+[hasDiag,answeredCount,noDiag,multi].join('|'));
   } finally {
