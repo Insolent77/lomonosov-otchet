@@ -155,6 +155,9 @@ async function main() {
     console.log('Diagnostic topic-course links: ' + topics.rowCount);
     console.log('Preparation rows: ' + preparation.rowCount);
     console.log('Aggregated answer rows: ' + answers.rowCount);
+    for (const x of topics.rows) {
+      console.log('TOPICMAP|' + x.course_id + '|' + x.topic_id + '|' + Buffer.from(String(x.topic_name),'utf8').toString('base64'));
+    }
 
     if (process.env.GITHUB_STEP_SUMMARY) {
       fs.appendFileSync(
