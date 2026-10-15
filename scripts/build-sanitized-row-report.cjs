@@ -50,6 +50,7 @@ async function main() {
       JOIN public.student_student s ON s.id=gls.student_id
       JOIN public.group_group g ON g.id=l.group_id
       WHERE l.start_dt >= TIMESTAMPTZ '2026-09-01 00:00:00+03'
+        AND l.start_dt < TIMESTAMPTZ '2026-10-15 00:00:00+03'
         AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
         AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
         AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'тест%'
@@ -98,64 +99,117 @@ async function main() {
 
     const byCourse = new Map();
     for (const d of diagnosticsQ.rows) {
-      const key=String(d.course_id);
-      if (!byCourse.has(key)) byCourse.set(key,[]);
-      byCourse.get(key).push({topic_id:String(d.topic_id),topic_name:clean(d.topic_name),task_count:Number(d.task_count||0)});
-    }
-    const ans = new Map();
-    for (const a of answersQ.rows) {
-      ans.set(String(a.student_id)+'|'+String(a.topic_id), {
-        answered:Number(a.answered||0),
-        correct:Number(a.correct||0)
+      const key = String(d.course_id);
+      if (!byCourse.has(key)) byCourse.set(key, []);
+      byCourse.get(key).push({
+        topic_id: String(d.topic_id),
+        topic_name: clean(d.topic_name),
+        task_count: Number(d.task_count || 0)
       });
     }
 
-    const pairs=pairsQ.rows.map(r=>({
-      student_id:String(r.student_id),
-      display_name:clean(r.student_surname+' '+r.student_name),
-      student_status:Number(r.student_status),
-      group_id:String(r.group_id),
-      group_name:clean(r.group_name),
-      course_id:r.course_id==null?null:String(r.course_id)
-    })).sort((a,b)=>a.display_name.localeCompare(b.display_name,'ru')||a.group_name.localeCompare(b.group_name,'ru'));
+    const ans = new Map();
+    for (const a of answersQ.rows) {
+      ans.set(String(a.student_id) + '|' + String(a.topic_id), {
+        answered: Number(a.answered || 0),
+        correct: Number(a.correct || 0)
+      });
+    }
 
-    const checksum=fnv1a(pairs.map(p=>p.display_name+'|'+p.group_id).join('\n'));
-    console.log('PAIR_COUNT='+pairs.length);
-    console.log('PAIR_CHECKSUM='+checksum);
+    const pairs = pairsQ.rows.map(r => ({
+      student_id: String(r.student_id),
+      display_name: clean(r.student_surname + ' ' + r.student_name),
+      student_status: Number(r.student_status),
+      group_id: String(r.group_id),
+      group_name: clean(r.group_name),
+      course_id: r.course_id == null ? null : String(r.course_id)
+    })).sort((a, b) =>
+      a.display_name.localeCompare(b.display_name, 'ru') ||
+      a.group_name.localeCompare(b.group_name, 'ru')
+    );
 
-    let hasDiag=0, answeredCount=0, noDiag=0, multi=0;
-    pairs.forEach((p,index)=>{
-      const candidates=p.course_id?(byCourse.get(p.course_id)||[]):[];
-      if(candidates.length) hasDiag++; else noDiag++;
-      if(candidates.length>1) multi++;
+    const checksum = fnv1a(
+      pairs.map(p => p.display_name + '|' + p.group_id).join('\n')
+    );
 
-      const scored=candidates.map(d=>{
-        const a=ans.get(p.student_id+'|'+d.topic_id)||{answered:0,correct:0};
-        return {...d,...a};
-      }).sort((a,b)=>b.answered-a.answered||b.correct-a.correct||a.topic_id.localeCompare(b.topic_id));
+    console.log('PAIR_COUNT=' + pairs.length);
+    console.log('PAIR_CHECKSUM=' + checksum);
 
-      const chosen=scored[0]||null;
-      if(chosen&&chosen.answered>0) answeredCount++;
+    let hasDiag = 0;
+    let answeredCount = 0;
+    let noDiag = 0;
+    let multi = 0;
 
-      const row=index+2;
-      const pct=chosen&&chosen.answered>0?percent(chosen.correct,chosen.task_count):'';
-      const correct=chosen?chosen.correct:0;
-      const total=chosen?chosen.task_count:0;
-      const answered=chosen?chosen.answered:0;
-      const has=candidates.length?1:0;
-      const status=p.student_status===1?'A':(p.student_status===0?'R':'U');
+    pairs.forEach((p, index) => {
+      const candidates = p.course_id
+        ? (byCourse.get(p.course_id) || [])
+        : [];
+
+      if (candidates.length) hasDiag++;
+      else noDiag++;
+
+      if (candidates.length > 1) multi++;
+
+      const scored = candidates.map(d => {
+        const a = ans.get(p.student_id + '|' + d.topic_id) || {
+          answered: 0,
+          correct: 0
+        };
+        return { ...d, ...a };
+      }).sort((a, b) =>
+        b.answered - a.answered ||
+        b.correct - a.correct ||
+        a.topic_id.localeCompare(b.topic_id)
+      );
+
+      const chosen = scored[0] || null;
+
+      if (chosen && chosen.answered > 0) answeredCount++;
+
+      const row = index + 2;
+      const pct = chosen && chosen.answered > 0
+        ? percent(chosen.correct, chosen.task_count)
+        : '';
+
+      const correct = chosen ? chosen.correct : 0;
+      const total = chosen ? chosen.task_count : 0;
+      const answered = chosen ? chosen.answered : 0;
+      const has = candidates.length ? 1 : 0;
+
+      const status =
+        p.student_status === 1
+          ? 'A'
+          : (p.student_status === 0 ? 'R' : 'U');
 
       // Sanitized output only: target row + diagnostic metrics + status.
-      console.log(['ROW',row,has,answered,correct,total,pct,status].join('|'));
+      console.log(
+        ['ROW', row, has, answered, correct, total, pct, status].join('|')
+      );
+
       if (chosen && chosen.topic_id && chosen.topic_name) {
-        console.log('TOPICROW|' + row + '|' + chosen.topic_id + '|' + Buffer.from(chosen.topic_name,'utf8').toString('base64'));
+        console.log(
+          'TOPICROW|' +
+          row + '|' +
+          chosen.topic_id + '|' +
+          Buffer.from(chosen.topic_name, 'utf8').toString('base64')
+        );
       } else {
         console.log('TOPICROW|' + row + '||');
       }
     });
-    console.log('STATS|'+[hasDiag,answeredCount,noDiag,multi].join('|'));
+
+    console.log(
+      'STATS|' +
+      [hasDiag, answeredCount, noDiag, multi].join('|')
+    );
   } finally {
-    await client.end().catch(()=>{});
+    await client.end().catch(() => {});
   }
 }
-main().catch(e=>{console.error('REPORT_FAILED:'+(e.code||e.message||'ERROR'));process.exitCode=1;});
+
+main().catch(e => {
+  console.error(
+    'REPORT_FAILED:' + (e.code || e.message || 'ERROR')
+  );
+  process.exitCode = 1;
+});
