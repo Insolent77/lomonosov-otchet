@@ -1,0 +1,28 @@
+name: Export encrypted student goals
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/export-encrypted-goals.cjs'
+      - '.github/workflows/export-encrypted-goals.yml'
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Export encrypted goals
+        run: node scripts/export-encrypted-goals.cjs
+        env:
+          DB_HOST: 37.140.199.107
+          DB_PORT: '16623'
+          DB_NAME: mylomonosov
+          DB_USER: readonly_user
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: 'false'
