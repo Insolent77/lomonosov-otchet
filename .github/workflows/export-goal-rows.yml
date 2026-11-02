@@ -1,6 +1,13 @@
 name: Export goal rows
 
 on:
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: 'Месяц отчёта в формате YYYY-MM, например 2026-10'
+        required: true
+        type: string
+
   pull_request:
     branches: [main]
     paths:
@@ -14,21 +21,28 @@ jobs:
   export:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
       - run: npm install --ignore-scripts --no-audit --no-fund
+
       - name: Export goals
         run: node scripts/export-goal-rows.cjs
         env:
+          TARGET_MONTH: ${{ inputs.target_month || '2026-09' }}
+
           DB_HOST: 37.140.199.107
           DB_PORT: '16623'
           DB_NAME: mylomonosov
           DB_USER: readonly_user
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           DB_SSL: 'false'
+
       - uses: actions/upload-artifact@v4
         with:
           name: goal-rows
