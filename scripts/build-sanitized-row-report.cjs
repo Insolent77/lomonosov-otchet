@@ -1,24 +1,134 @@
 'use strict';
+
 const { Client } = require('pg');
 
+const MONTHS_RU = [
+  'январь',
+  'февраль',
+  'март',
+  'апрель',
+  'май',
+  'июнь',
+  'июль',
+  'август',
+  'сентябрь',
+  'октябрь',
+  'ноябрь',
+  'декабрь'
+];
+
 function clean(v) {
-  return String(v ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  return String(v ?? '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
+
 function fnv1a(text) {
   let h = 0x811c9dc5;
+
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
+
   return h.toString(16).padStart(8, '0');
 }
+
 function percent(correct, total) {
   if (!total) return null;
+
   return Math.round((correct * 10000) / total) / 100;
 }
 
+function getReportPeriod(targetMonth) {
+  if (!/^\d{4}-\d{2}$/.test(targetMonth)) {
+    throw new Error('TARGET_MONTH must be YYYY-MM');
+  }
+
+  const [year, month] = targetMonth.split('-').map(Number);
+
+  if (month < 1 || month > 12) {
+    throw new Error('INVALID_TARGET_MONTH');
+  }
+
+  const monthNameRu = MONTHS_RU[month - 1];
+
+  /*
+   * Реестр накапливается в рамках учебного года.
+   *
+   * Например:
+   * 2026-09 → 01.09.2026–01.10.2026
+   * 2026-10 → 01.09.2026–01.11.2026
+   * 2026-11 → 01.09.2026–01.12.2026
+   * 2027-01 → 01.09.2026–01.02.2027
+   *
+   * Поэтому ученик, впервые появившийся в октябре,
+   * добавится к сентябрьскому списку, а сентябрьские
+   * ученики не исчезнут.
+   */
+
+  const academicYear =
+    month >= 9
+      ? year
+      : year - 1;
+
+  const academicYearStart =
+    `${academicYear}-09-01`;
+
+  let nextYear = year;
+  let nextMonth = month + 1;
+
+  if (nextMonth === 13) {
+    nextMonth = 1;
+    nextYear += 1;
+  }
+
+  const endDate =
+    `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
+  return {
+    targetMonth,
+    year,
+    month,
+    monthNameRu,
+    academicYearStart,
+    endDate
+  };
+}
+
 async function main() {
-  if (!process.env.DB_PASSWORD) throw new Error('DB_PASSWORD_MISSING');
+  if (!process.env.DB_PASSWORD) {
+    throw new Error('DB_PASSWORD_MISSING');
+  }
+
+  if (!process.env.TARGET_MONTH) {
+    throw new Error('TARGET_MONTH_MISSING');
+  }
+
+  const period = getReportPeriod(
+    process.env.TARGET_MONTH.trim()
+  );
+
+  const topicPattern =
+    `%срез знаний ${period.monthNameRu}%`;
+
+  console.log(
+    'TARGET_MONTH=' + period.targetMonth
+  );
+
+  console.log(
+    'TARGET_MONTH_RU=' + period.monthNameRu
+  );
+
+  console.log(
+    'PAIR_START=' + period.academicYearStart
+  );
+
+  console.log(
+    'PAIR_END=' + period.endDate
+  );
+
   const client = new Client({
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT),
@@ -32,108 +142,259 @@ async function main() {
   });
 
   await client.connect();
+
   try {
     await client.query('BEGIN READ ONLY');
-    await client.query("SET LOCAL statement_timeout='60000ms'");
+
+    await client.query(
+      "SET LOCAL statement_timeout='60000ms'"
+    );
+
+    /*
+     * CANONICAL PAIR MAPPING
+     *
+     * Только фактические уроки:
+     *
+     * group_lesson_students
+     * → group_lesson
+     * → student_student
+     * → group_group
+     */
 
     const pairsQ = await client.query(`
       SELECT DISTINCT
-        s.id student_id,
-        s.name student_name,
-        s.surname student_surname,
+        s.id AS student_id,
+        s.name AS student_name,
+        s.surname AS student_surname,
         s.student_status,
-        g.id group_id,
-        g.name group_name,
+        g.id AS group_id,
+        g.name AS group_name,
         g.course_id
       FROM public.group_lesson_students gls
-      JOIN public.group_lesson l ON l.id=gls.lesson_id
-      JOIN public.student_student s ON s.id=gls.student_id
-      JOIN public.group_group g ON g.id=l.group_id
-      WHERE l.start_dt >= TIMESTAMPTZ '2026-09-01 00:00:00+03'
-        AND l.start_dt < TIMESTAMPTZ '2026-10-15 00:00:00+03'
-        AND LOWER(TRIM(COALESCE(s.name,''))) <> 'ученик'
-        AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'test%'
-        AND LOWER(TRIM(COALESCE(s.name,''))) NOT LIKE 'тест%'
-    `);
+      JOIN public.group_lesson l
+        ON l.id = gls.lesson_id
+      JOIN public.student_student s
+        ON s.id = gls.student_id
+      JOIN public.group_group g
+        ON g.id = l.group_id
+      WHERE
+        l.start_dt >= (
+          $1::date::timestamp
+          AT TIME ZONE 'Europe/Moscow'
+        )
+        AND l.start_dt < (
+          $2::date::timestamp
+          AT TIME ZONE 'Europe/Moscow'
+        )
+        AND LOWER(
+          TRIM(COALESCE(s.name,''))
+        ) <> 'ученик'
+        AND LOWER(
+          TRIM(COALESCE(s.name,''))
+        ) NOT LIKE 'test%'
+        AND LOWER(
+          TRIM(COALESCE(s.name,''))
+        ) NOT LIKE 'тест%'
+    `, [
+      period.academicYearStart,
+      period.endDate
+    ]);
+
+    /*
+     * Ищем темы среза только нужного месяца.
+     *
+     * Например для TARGET_MONTH=2026-10:
+     *
+     * %срез знаний октябрь%
+     */
 
     const diagnosticsQ = await client.query(`
       SELECT
         ah.course_id,
-        t.id topic_id,
-        t.name topic_name,
-        COUNT(task.id)::int task_count
+        t.id AS topic_id,
+        t.name AS topic_name,
+        COUNT(task.id)::int AS task_count
       FROM public.course_assignedhomework ah
-      JOIN public.course_topicinhomework tih ON tih.homework_id=ah.homework_id
-      JOIN public.course_topic t ON t.id=tih.topic_id
-      LEFT JOIN public.course_task task ON task.topic_id=t.id
-      WHERE LOWER(t.name) LIKE '%срез знаний сентябрь%'
-      GROUP BY ah.course_id,t.id,t.name
-      ORDER BY ah.course_id,t.id
-    `);
+      JOIN public.course_topicinhomework tih
+        ON tih.homework_id = ah.homework_id
+      JOIN public.course_topic t
+        ON t.id = tih.topic_id
+      LEFT JOIN public.course_task task
+        ON task.topic_id = t.id
+      WHERE LOWER(t.name) LIKE $1
+      GROUP BY
+        ah.course_id,
+        t.id,
+        t.name
+      ORDER BY
+        ah.course_id,
+        t.id
+    `, [
+      topicPattern
+    ]);
+
+    /*
+     * Берём последний ответ ученика
+     * по каждой задаче выбранного месяца.
+     */
 
     const answersQ = await client.query(`
       WITH diagnostic_topics AS (
-        SELECT id topic_id
+        SELECT id AS topic_id
         FROM public.course_topic
-        WHERE LOWER(name) LIKE '%срез знаний сентябрь%'
+        WHERE LOWER(name) LIKE $1
       ),
+
       latest AS (
-        SELECT DISTINCT ON (a.student_id,a.task_id)
-          a.student_id,a.task_id,a.is_right,a.date
+        SELECT DISTINCT ON (
+          a.student_id,
+          a.task_id
+        )
+          a.student_id,
+          a.task_id,
+          a.is_right,
+          a.date
         FROM public.student_studentanswer a
-        JOIN public.course_task task ON task.id=a.task_id
-        JOIN diagnostic_topics d ON d.topic_id=task.topic_id
-        ORDER BY a.student_id,a.task_id,a.date DESC,a.id DESC
+        JOIN public.course_task task
+          ON task.id = a.task_id
+        JOIN diagnostic_topics d
+          ON d.topic_id = task.topic_id
+        ORDER BY
+          a.student_id,
+          a.task_id,
+          a.date DESC,
+          a.id DESC
       )
+
       SELECT
         l.student_id,
         task.topic_id,
-        COUNT(*)::int answered,
-        COUNT(*) FILTER (WHERE l.is_right IS TRUE)::int correct
+        COUNT(*)::int AS answered,
+        COUNT(*) FILTER (
+          WHERE l.is_right IS TRUE
+        )::int AS correct
       FROM latest l
-      JOIN public.course_task task ON task.id=l.task_id
-      GROUP BY l.student_id,task.topic_id
-    `);
+      JOIN public.course_task task
+        ON task.id = l.task_id
+      GROUP BY
+        l.student_id,
+        task.topic_id
+    `, [
+      topicPattern
+    ]);
 
     await client.query('ROLLBACK');
 
+    /*
+     * Диагностические темы по course_id.
+     */
+
     const byCourse = new Map();
+
     for (const d of diagnosticsQ.rows) {
       const key = String(d.course_id);
-      if (!byCourse.has(key)) byCourse.set(key, []);
+
+      if (!byCourse.has(key)) {
+        byCourse.set(key, []);
+      }
+
       byCourse.get(key).push({
         topic_id: String(d.topic_id),
-        topic_name: clean(d.topic_name),
-        task_count: Number(d.task_count || 0)
+
+        topic_name:
+          clean(d.topic_name),
+
+        task_count:
+          Number(d.task_count || 0)
       });
     }
+
+    /*
+     * Ответы:
+     *
+     * student_id|topic_id
+     */
 
     const ans = new Map();
+
     for (const a of answersQ.rows) {
-      ans.set(String(a.student_id) + '|' + String(a.topic_id), {
-        answered: Number(a.answered || 0),
-        correct: Number(a.correct || 0)
-      });
+      ans.set(
+        String(a.student_id) +
+          '|' +
+          String(a.topic_id),
+        {
+          answered:
+            Number(a.answered || 0),
+
+          correct:
+            Number(a.correct || 0)
+        }
+      );
     }
 
-    const pairs = pairsQ.rows.map(r => ({
-      student_id: String(r.student_id),
-      display_name: clean(r.student_surname + ' ' + r.student_name),
-      student_status: Number(r.student_status),
-      group_id: String(r.group_id),
-      group_name: clean(r.group_name),
-      course_id: r.course_id == null ? null : String(r.course_id)
-    })).sort((a, b) =>
-      a.display_name.localeCompare(b.display_name, 'ru') ||
-      a.group_name.localeCompare(b.group_name, 'ru')
-    );
+    /*
+     * Финальный canonical pair set.
+     */
+
+    const pairs = pairsQ.rows
+      .map(r => ({
+        student_id:
+          String(r.student_id),
+
+        display_name:
+          clean(
+            r.student_surname +
+              ' ' +
+              r.student_name
+          ),
+
+        student_status:
+          Number(r.student_status),
+
+        group_id:
+          String(r.group_id),
+
+        group_name:
+          clean(r.group_name),
+
+        course_id:
+          r.course_id == null
+            ? null
+            : String(r.course_id)
+      }))
+      .sort((a, b) =>
+        a.display_name.localeCompare(
+          b.display_name,
+          'ru'
+        ) ||
+        a.group_name.localeCompare(
+          b.group_name,
+          'ru'
+        )
+      );
+
+    /*
+     * CHECKSUM
+     */
 
     const checksum = fnv1a(
-      pairs.map(p => p.display_name + '|' + p.group_id).join('\n')
+      pairs
+        .map(
+          p =>
+            p.display_name +
+            '|' +
+            p.group_id
+        )
+        .join('\n')
     );
 
-    console.log('PAIR_COUNT=' + pairs.length);
-    console.log('PAIR_CHECKSUM=' + checksum);
+    console.log(
+      'PAIR_COUNT=' + pairs.length
+    );
+
+    console.log(
+      'PAIR_CHECKSUM=' + checksum
+    );
 
     let hasDiag = 0;
     let answeredCount = 0;
@@ -141,75 +402,173 @@ async function main() {
     let multi = 0;
 
     pairs.forEach((p, index) => {
-      const candidates = p.course_id
-        ? (byCourse.get(p.course_id) || [])
-        : [];
+      const candidates =
+        p.course_id
+          ? (
+              byCourse.get(
+                p.course_id
+              ) || []
+            )
+          : [];
 
-      if (candidates.length) hasDiag++;
-      else noDiag++;
+      if (candidates.length) {
+        hasDiag++;
+      } else {
+        noDiag++;
+      }
 
-      if (candidates.length > 1) multi++;
+      if (candidates.length > 1) {
+        multi++;
+      }
 
-      const scored = candidates.map(d => {
-        const a = ans.get(p.student_id + '|' + d.topic_id) || {
-          answered: 0,
-          correct: 0
-        };
-        return { ...d, ...a };
-      }).sort((a, b) =>
-        b.answered - a.answered ||
-        b.correct - a.correct ||
-        a.topic_id.localeCompare(b.topic_id)
-      );
+      /*
+       * Если несколько тем:
+       *
+       * 1. больше answered
+       * 2. больше correct
+       * 3. меньший topic_id
+       */
 
-      const chosen = scored[0] || null;
+      const scored = candidates
+        .map(d => {
+          const a =
+            ans.get(
+              p.student_id +
+                '|' +
+                d.topic_id
+            ) || {
+              answered: 0,
+              correct: 0
+            };
 
-      if (chosen && chosen.answered > 0) answeredCount++;
+          return {
+            ...d,
+            ...a
+          };
+        })
+        .sort((a, b) =>
+          b.answered - a.answered ||
+          b.correct - a.correct ||
+          a.topic_id.localeCompare(
+            b.topic_id
+          )
+        );
 
-      const row = index + 2;
-      const pct = chosen && chosen.answered > 0
-        ? percent(chosen.correct, chosen.task_count)
-        : '';
+      const chosen =
+        scored[0] || null;
 
-      const correct = chosen ? chosen.correct : 0;
-      const total = chosen ? chosen.task_count : 0;
-      const answered = chosen ? chosen.answered : 0;
-      const has = candidates.length ? 1 : 0;
+      if (
+        chosen &&
+        chosen.answered > 0
+      ) {
+        answeredCount++;
+      }
+
+      const row =
+        index + 2;
+
+      const pct =
+        chosen &&
+        chosen.answered > 0
+          ? percent(
+              chosen.correct,
+              chosen.task_count
+            )
+          : '';
+
+      const correct =
+        chosen
+          ? chosen.correct
+          : 0;
+
+      const total =
+        chosen
+          ? chosen.task_count
+          : 0;
+
+      const answered =
+        chosen
+          ? chosen.answered
+          : 0;
+
+      const has =
+        candidates.length
+          ? 1
+          : 0;
 
       const status =
         p.student_status === 1
           ? 'A'
-          : (p.student_status === 0 ? 'R' : 'U');
+          : (
+              p.student_status === 0
+                ? 'R'
+                : 'U'
+            );
 
-      // Sanitized output only: target row + diagnostic metrics + status.
       console.log(
-        ['ROW', row, has, answered, correct, total, pct, status].join('|')
+        [
+          'ROW',
+          row,
+          has,
+          answered,
+          correct,
+          total,
+          pct,
+          status
+        ].join('|')
       );
 
-      if (chosen && chosen.topic_id && chosen.topic_name) {
+      if (
+        chosen &&
+        chosen.topic_id &&
+        chosen.topic_name
+      ) {
         console.log(
           'TOPICROW|' +
-          row + '|' +
-          chosen.topic_id + '|' +
-          Buffer.from(chosen.topic_name, 'utf8').toString('base64')
+          row +
+          '|' +
+          chosen.topic_id +
+          '|' +
+          Buffer.from(
+            chosen.topic_name,
+            'utf8'
+          ).toString('base64')
         );
       } else {
-        console.log('TOPICROW|' + row + '||');
+        console.log(
+          'TOPICROW|' +
+          row +
+          '||'
+        );
       }
     });
 
     console.log(
       'STATS|' +
-      [hasDiag, answeredCount, noDiag, multi].join('|')
+      [
+        hasDiag,
+        answeredCount,
+        noDiag,
+        multi
+      ].join('|')
     );
+
   } finally {
-    await client.end().catch(() => {});
+    await client
+      .end()
+      .catch(() => {});
   }
 }
 
 main().catch(e => {
   console.error(
-    'REPORT_FAILED:' + (e.code || e.message || 'ERROR')
+    'REPORT_FAILED:' +
+    (
+      e.code ||
+      e.message ||
+      'ERROR'
+    )
   );
+
   process.exitCode = 1;
 });
