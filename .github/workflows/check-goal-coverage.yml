@@ -1,0 +1,31 @@
+name: Check goal coverage
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/check-goal-coverage.cjs'
+      - '.github/workflows/check-goal-coverage.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Check goal field coverage
+        run: node scripts/check-goal-coverage.cjs
+        env:
+          DB_HOST: 37.140.199.107
+          DB_PORT: '16623'
+          DB_NAME: mylomonosov
+          DB_USER: readonly_user
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: 'false'

@@ -1,0 +1,43 @@
+name: Export September diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/export-september-diagnostics.cjs'
+      - '.github/workflows/export-september-diagnostics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Export diagnostic data from PostgreSQL
+        run: node scripts/export-september-diagnostics.cjs
+        env:
+          DB_HOST: 37.140.199.107
+          DB_PORT: '16623'
+          DB_NAME: mylomonosov
+          DB_USER: readonly_user
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: 'false'
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: september-diagnostics
+          path: report-result/diagnostics.json
+          if-no-files-found: error
+          retention-days: 1
